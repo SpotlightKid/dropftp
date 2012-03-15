@@ -107,7 +107,6 @@ def create_sftp_client(config):
                         keys.append(_load_key(pk, config, type_))
                         break
         else:
-            # XXX: assume DSA-Key
             keys.append(_load_key(private_key, config))
 
     # get host key, if we know one
@@ -127,8 +126,8 @@ def create_sftp_client(config):
             log.info('Using host key: %s/%s', keytype,
                 " ".join("%02X" % ord(c) for c in hostkey.get_fingerprint()))
         else:
-            log.warning("No host key found for '%s'. Disabling host key check.",
-                hostname)
+            log.warning("No host key found for '%s'. "
+                "Disabling host key check.", hostname)
 
     # now, connect and use paramiko Transport to negotiate SSH2 across the
     # connection
@@ -137,8 +136,8 @@ def create_sftp_client(config):
     if keys:
         for key in keys:
             try:
-                tpt.connect(username=username, password=password, hostkey=hostkey,
-                    pkey=key)
+                tpt.connect(username=username, password=password, 
+                    hostkey=hostkey, pkey=key)
                 break
             except paramiko.SSHException:
                 pass
@@ -153,6 +152,10 @@ def create_sftp_client(config):
 
 
 class FSEventUploader(object):
+    """Watch a directory via FSEvents and upload new/changed files via SFTP
+    to a remote host.
+
+    """
     name = 'dropsftp'
     
     def __init__(self, config):
