@@ -1,6 +1,18 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-"""SFTP test client based on python-paramiko."""
+"""Watch a folder and upload new/changed files to a remote host via SFTP.
+
+Also displays notifications via Growl.
+
+Dependencies
+------------
+
+* MacFSEvents: https://github.com/malthe/macfsevents
+* ConfigObj: http://www.voidspace.org.uk/python/configobj.html
+* Paramiko: http://www.lag.net/paramiko/
+* Growl 1.2.2: http://growl.info/downloads
+
+"""
 
 import logging
 import getpass
@@ -16,9 +28,13 @@ import configobj
 import paramiko
 import Growl
 
-from fsevents import Stream, Observer
-from fsevents.constants import *
+from fsevents import Stream, Observer, IN_CREATE, IN_MODIFY
 
+__author__ = "Christopher Arndt"
+__version__ = "1.0.1"
+__revision__ = "$Rev$"
+__license__ = "MIT License"
+__usage__ = "%prog [-d|--debug] [-c|--config <config.ini>]"
 
 log = logging.getLogger("dropsftp")
 
@@ -56,12 +72,12 @@ def create_sftp_client(config):
     private_key - path to private RSA or DSA key file (~/.ssh/id_rsa or
                   ~/.ssh/id_dsa)
     passphrase  - passphrase to use when loading the private key (None)
-    log_path    - Path of log file for paramiko messages
+    ssh_log_path - Path of log file for paramiko messages
 
     """
     # setup logging
-    if 'log_path' in config:
-        paramiko.util.log_to_file(config['log_path'])
+    if config.get('ssh_log_path'):
+        paramiko.util.log_to_file(config['ssh_log_path'])
 
     hostname = config.get('remote_host', 'localhost')
     port = config.get('remote_port', 22)
@@ -184,13 +200,15 @@ class FSEventUploader(object):
         self.observer.join()
         self.stream.close()
 
+
 def main(args=None):
-    optparser = optparse.OptionParser()
+    optparser = optparse.OptionParser(usage=__usage__,
+        description=__doc__.splitlines()[0], version=__version__)
     optparser.add_option('-d', '--debug',
         dest="debug", action="store_true",
         help="Enable debug logging")
     optparser.add_option('-c', '--config', dest="configpath",
-        default=expanduser('~/.config/sftp_uploader.ini'), metavar="PATH",
+        default=expanduser('~/.config/dropsftp.ini'), metavar="PATH",
         help="Path to configuration file (default: %default)")
 
     if args is None:
@@ -210,22 +228,14 @@ def main(args=None):
     else:
         logging.basicConfig(level=loglevel)
 
-    #~ sftp, transport = create_sftp_client(config)
-
-    #~ print "\n".join(
-        #~ sorted(e for e in sftp.listdir(config.get('remote_dir', '.'))
-        #~ if not e.startswith('.')))
-    
     growler = FSEventUploader(config)
     
     try:
         while True:
-            time.sleep(0.1)
+            time.sleep(1)
     except KeyboardInterrupt:
         growler.close()
 
-    #~ sftp.close()
-    #~ transport.close()
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]) or 0)
