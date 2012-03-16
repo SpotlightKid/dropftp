@@ -1,23 +1,24 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-"""Convenience wrapper for ssh.SFTPClient configured through a config file.
+"""Convenience wrapper for ssh.SFTPClient configured via a config file/dict.
 
 Uses ssh for python (paramiko fork from http://pypi.python.org/pypi/ssh) or
 original paramiko.
 
-If called from the comamnd line, tries to log into remote host and
-retrieves/prints a listing of the configured remote directory.
+If called from the command line, tries to log into remote host and retrieves &
+prints a listing of the configured remote directory.
 
 """
 
 __all__ = ['ConfigSFTPClient']
 
+import itertools
 import logging
 import getpass
 import sys
 import re
 
-from os.path import exists, expanduser
+from os.path import abspath, dirname, exists, expanduser, join
 
 try:
     # try paramiko fork first
@@ -30,8 +31,10 @@ log = logging.getLogger(__name__)
 
 
 class ConfigSFTPClient(object):
+    """A wrapper for ssh.SFTPClient configured via a config dict."""
+
     def __init__(self, config):
-        """Create a ssh.SFTPClient instance using the passed config.
+        """Create a ssh.SFTPClient instance using the passed config dictionary.
 
         The following config keys are used. Defaults are given in parentheses:
 
@@ -39,10 +42,40 @@ class ConfigSFTPClient(object):
         remote_port - port number of SFTP server (22)
         username    - user name of account on SFTP server (local user name)
         password    - password for remote account (None, i.e. use key auth)
-        private_key - path to private RSA or DSA key file (~/.ssh/id_rsa or
-                      ~/.ssh/id_dsa)
-        passphrase  - passphrase to use when loading the private key (None)
+        private_key - path to private RSA or DSA key file or ssh.PKey
+                      sub-class instance (None)
+        passphrase  - passphrase to use when loading the private key
+                      or callable, which takes two arguments (hostname and
+                      username) and returns a passphrase (None)
+        compress    - When True, enable transport data compression (False)
         ssh_log_path - Path of log file for ssh messages (None)
+        ssh_dir     - directory in which to look for known hosts file and
+                      private key files (~/.ssh)
+        
+        If no or an empty password is given, the given private_key will be used
+        for authentication. private_key can be a path to a key file, which will
+        be loaded using the provided passphrase, if necessary, or an instance 
+        of a sub-class of ssh.PKey, which will be used as-is.
+
+        If no private_key is provided either, the keys available through a
+        SSH agent, if any, and any keys found in the user's ssh_dir will be
+        tried in that order. To discover a running SSH agent, the SSH_AUTH_SOCK
+        environment variable must point to a socket file, through which a 
+        connection to the agent can be established. Private key files in the 
+        user's ssh_dir must be in OpenSSH RSA or DSA format and be named 
+        'id_rsa' or 'id_dsa' resp.
+
+        If a passphrase is required to load a key file, the passphrase set in
+        the config dict will be used directly, if it is a string. If the
+        passphrase is a callable, it will be called with the filename, hostname
+        and username as arguments and is expected to return the passphrase or 
+        None, if the key should be skipped. If no passphrase is given in the 
+        config, the user is prompted for the passphrase through the console, 
+        as a last resort.
+
+        For remote host verification, a host key will be searched and loaded
+        from the 'known_hosts' file in the user's ssh_dir. If no host key is
+        found, no host verification is done.
 
         """
         self.config = config
@@ -59,10 +92,8 @@ class ConfigSFTPClient(object):
         hostkey = self._load_host_key(hostname)
 
         log.debug("Connecting to %s, port %s...", hostname, port)
-        #~client = ssh.SSHClient()
-        #~client.load_system_host_keys()
-        #~client.connect(hostname, port, username, password, key_filename=private_key)
         self._transport = tpt = ssh.Transport((hostname, port))
+        tpt.use_compression(compress=config.get('compress', False))
         self._authenticate(tpt, username, password, hostkey, private_key)
 
         if tpt.is_authenticated():
@@ -73,19 +104,31 @@ class ConfigSFTPClient(object):
             raise tpt.get_exception()
 
     def close(self):
+        """Close the ssh.SFTPClient instance and teh SSH transport."""
         self._client.close()
         self._transport.close()
 
     def __getattr__(self, name):
+        """Delegate attribute lookup to ssh.SFTPClient instance."""
         return getattr(self._client, name)
 
     def _load_host_key(self, hostname):
+        """Load host key for given hostname from known hosts file.
+        
+        Looks for the known hosts file under the filename 'known_hosts' in the
+        user's ssh dir, i.e. the path set with teh config key 'ssh_dir' or
+        '~/.ssh'.
+        
+        Returns a ssh.HostKey instance or None, if no key for the host was
+        found.
+
+        """
         # get host key, if we know one
-        keytype = None
         hostkey = None
 
         try:
-            known_hosts = expanduser('~/.ssh/known_hosts')
+            known_hosts = join(self.config.get('ssh_dir',
+                expanduser('~/.ssh')), 'known_hosts')
             host_keys = ssh.util.load_host_keys(known_hosts)
         except (IOError, OSError) as exc:
             log.warning("Could not read known hosts file '%s': %s",
@@ -103,15 +146,14 @@ class ConfigSFTPClient(object):
         return hostkey
 
     def _load_private_key(self, filename, keytype=None):
-        """Load private SSH key from file, return ssh.PKey subclass instance.
+        """Load private SSH key from file, return ssh.PKey sub-class instance.
 
         If ``keytype`` is not given, tries to determine the key type
         (RSA or DSA) by loading the key file and looking at the BEGIN RSA/DSA
         PRIVATE KEY line.
 
-        If the key is protected with a passphrase, and no passphrase is
-        specified in the config object, prompts user for the passphrase through
-        the console.
+        See the documentation of the constructor on the details of key
+        passphrase handling.
 
         """
         type_map = {
@@ -121,6 +163,7 @@ class ConfigSFTPClient(object):
         if keytype is None:
             with open(filename, 'rb') as k:
                 keydata = k.read()
+            
             m = re.search("BEGIN (.*?) PRIVATE KEY", keydata)
             if m:
                 keytype = m.group(1)
@@ -131,64 +174,77 @@ class ConfigSFTPClient(object):
             key = keycls.from_private_key_file(filename)
             log.debug("Loaded key '%s' without password.", filename)
         except ssh.PasswordRequiredException:
-            passphrase = self.config.get('passphrase',
-                getpass.getpass("Key passphrase: "))
+            passphrase = self.config.get('passphrase')
+            
+            if callable(passphrase):
+                passphrase = passphrase(filename,
+                    self.config.get('remote_host', 'localhost'),
+                    self.config.get('username', getpass.getuser()))
+                if passphrase is None:
+                    return
+
+            if not passphrase:
+                passphrase = getpass.getpass("Key passphrase: ")
+            
             key = keycls.from_private_key_file(filename, passphrase)
 
         return key
 
     def _authenticate(self, transport, username, password=None, hostkey=None,
             pkey=None):
-        keys = []
+        """Perform authentication of SSH transport using given credentials.
+        
+        See documentation of the constructor for details on the authentication
+        methods.
 
+        """
         if not password:
-            if not pkey:
-                # first try to get key from ssh-agent
-                try:
-                    log.debug("Fetching keys from SSH agent...")
-                    agent = ssh.Agent()
-                    keys = list(agent.get_keys())
-                    if not keys:
-                        raise ValueError
-                except (ValueError, ssh.SSHException):
-                    log.debug("No keys stored with SSH agent. Trying to load "
-                        "keys from ~/.ssh")
-                    # failing that, try to find a key on disk
-                    for keytype in ('dsa', 'rsa'):
-                        pk = expanduser('~/.ssh/id_%s' % keytype)
-                        if exists(pk):
-                            log.debug("Found %s key: %s", keytype, pk)
-                            keys.append(self._load_private_key(pk, keytype))
-                            break
+            if pkey:
+                if not isinstance(pkey, (tuple, list)):
+                    pkey = [pkey]
             else:
-                keys.append(self._load_private_key(pkey))
-
-        saved_exception = None
-        for key in keys:
-            try:
-                transport.connect(username=username, hostkey=hostkey, pkey=key)
-                log.debug("Authentication (pubkey) successful. Key: '%s'.",
-                    key.get_name())
-                return
-            except ssh.SSHException as exc:
-                log.exception("Exception authenticating using key '%s'",
-                    key.get_name())
-                saved_exception = exc
+                log.debug("Fetching keys from SSH agent...")
+                agent = ssh.Agent()
+                agent_keys = agent.get_keys()
+                log.debug("Agent keys: %r", agent_keys)
+                key_files = [join(self.config.get('ssh_dir',
+                    expanduser('~/.ssh')), 'id_%s' % keytype)
+                    for keytype in ('dsa', 'rsa')]
+                pkey = itertools.chain(agent_keys, key_files)
+                
+            saved_exception = None
+            for key in pkey:
+                if not isinstance(key, ssh.PKey):
+                    if not exists(key):
+                        continue
+                    
+                    log.debug("Loading key file: %s", key)
+                    key = self._load_private_key(key)
+                
+                try:
+                    transport.connect(username=username, hostkey=hostkey,
+                        pkey=key)
+                    if transport.is_authenticated():
+                        log.info("Authentication (pubkey) successful. "
+                            "Key: '%s'.", key.get_name())
+                        return
+                except ssh.SSHException as exc:
+                    log.info("Authenticating using key '%s' failed.",
+                        key.get_name())
+                    saved_exception = exc
 
         try:
             transport.connect(username=username, password=password,
                 hostkey=hostkey)
-            log.debug("Authentication (password) successful.")
+            log.info("Authentication (password) successful.")
             if transport.is_authenticated():
                 return
         except ssh.SSHException as exc:
-            import traceback
-            traceback.print_exc(20)
-            raise
             saved_exception = exc
 
         if saved_exception:
             raise saved_exception
+
 
 def _test(args=None):
     import optparse
@@ -218,6 +274,23 @@ def _test(args=None):
         logging.basicConfig(filename=config['log_path'], level=loglevel)
     else:
         logging.basicConfig(level=loglevel)
+
+    if not config.get('passphrase'):
+        import subprocess
+        
+        if sys.platform == 'darwin':
+            ssh_askpass = join(abspath(dirname(__file__)), 'macosx-askpass')
+        else:
+            ssh_askpass = 'ssh-askpass'
+
+        def get_passphrase(*args):
+            try:
+                return subprocess.check_output(
+                    [ssh_askpass, "Please enter SSH key passphrase:"]).strip()
+            except subprocess.CalledProcessError:
+                return None
+
+        config['passphrase'] = get_passphrase
 
     sftp = ConfigSFTPClient(config)
     print "\n".join(
