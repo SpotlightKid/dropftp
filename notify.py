@@ -23,7 +23,7 @@ APP_NAME = 'notify.py'
 
 # pynotify (linux)
 try:
-    import pynotifyx
+    import pynotify
     import gobject
     gobject.threads_init()
 except ImportError:
@@ -34,7 +34,7 @@ if pynotify:
     Growl = None
 else:
     try:
-        import Growl
+        import Growlx
     except ImportError:
         Growl = None
 
@@ -81,11 +81,14 @@ elif Growl:
         """
         global growl
         register(app_name)
+
         if icon is None:
             icon = {}
         else:
             icon = {'applicationIcon': Growl.Image.imageFromPath(icon)}
+
         growl = Growl.GrowlNotifier(APP_NAME, [APP_NAME], **icon)
+        growl.register()
 
     def notify(title, message, icon='gtk-dialog-info', wxicon=None,
             urgency=None, timeout=None):
@@ -94,7 +97,7 @@ elif Growl:
 elif TB:
     import atexit
 
-    from threading import Thread, Event
+    from threading import Thread
     from Queue import Queue, Empty
 
     # global Notifier instance, created on demand
@@ -106,22 +109,25 @@ elif TB:
             self.app_name = app_name
             self.icon = icon
             self.queue = Queue()
-            self.app = wx.PySimpleApp()
+            self.app = wx.App()
             # dummy frame as top-level window
             self.frame = wx.Frame(None)
             self.timer = wx.Timer()
             self.daemon = True
+            self.timer.Start(50)
             self.start()
 
         def run(self, *args):
             self.app.Bind(wx.EVT_TIMER, self._check_queue, self.timer)
-            self.timer.Start(50)
             self.app.MainLoop()
 
         def stop(self):
             self.queue.put(None)
 
         def _check_queue(self, event):
+            if not self.is_alive():
+                return
+
             try:
                 event = self.queue.get_nowait()
             except Empty:
@@ -193,6 +199,10 @@ elif TB:
             NOTIFIER.join()
             NOTIFIER = None
 else:
+    import warnings
+    
+    warnings.warn("None of the supported methods to display desktop "
+        "notifications could be found. Notifications will not be shown.")
     def notify(*args, **kw):
         pass
 

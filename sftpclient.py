@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
-"""Convenience wrapper for ssh.SFTPClient configured via a config file/dict.
+"""Convenience wrapper for ``ssh.SFTPClient`` configured via a config file/dict.
 
 Uses ssh for python (paramiko fork from http://pypi.python.org/pypi/ssh) or
 original paramiko.
 
 If called from the command line, tries to log into remote host and retrieves &
-prints a listing of the configured remote directory.
+prints a listing of the remote directory. The remote directory can be given as
+the first non-option argument on the comamnd line or specified in the config
+file under the key ``'remote_dir'``. If neither is given, the current
+directory, i.e. the user's working directory after log in, is used.
 
 """
 
@@ -38,43 +41,49 @@ class ConfigSFTPClient(object):
 
         The following config keys are used. Defaults are given in parentheses:
 
-        remote_host - hostname or IP of SFTP server to connect to (localhost)
-        remote_port - port number of SFTP server (22)
-        username    - user name of account on SFTP server (local user name)
-        password    - password for remote account (None, i.e. use key auth)
-        private_key - path to private RSA or DSA key file or ssh.PKey
-                      sub-class instance (None)
-        passphrase  - passphrase to use when loading the private key
-                      or callable, which takes two arguments (hostname and
-                      username) and returns a passphrase (None)
-        compress    - When True, enable transport data compression (False)
-        ssh_log_path - Path of log file for ssh messages (None)
-        ssh_dir     - directory in which to look for known hosts file and
-                      private key files (~/.ssh)
+        ``remote_host`` - hostname or IP address of SFTP server to connect to
+                          (``'localhost'``)
+        ``remote_port`` - port number of SFTP server (``22``)
+        ``username``    - user name of account on SFTP server (local user name)
+        ``password``    - password for remote account (``None``, i.e. try key
+                          authentication)
+        ``private_key`` - path to private RSA or DSA key file or ``ssh.PKey``
+                          sub-class instance (``None``)
+        ``passphrase``  - passphrase to use when loading the private key
+                          or callable, which takes three arguments (key
+                          filename, hostname and username) and returns a 
+                          passphrase or ``None`` (``None``)
+        ``compress``    - When ``True``, enable transport data compression
+                          (``False``)
+        ``ssh_log_path`` - Path of log file for SSH messages (``None``)
+        ``ssh_dir``     - directory in which to look for ``known_hosts`` file
+                          and private key files (``'~/.ssh'``)
         
-        If no or an empty password is given, the given private_key will be used
-        for authentication. private_key can be a path to a key file, which will
-        be loaded using the provided passphrase, if necessary, or an instance 
-        of a sub-class of ssh.PKey, which will be used as-is.
+        If no or an empty ``password`` is given, the given ``private_key`` will
+        be used for authentication. ``private_key`` can be a path to a key 
+        file, which will be loaded using the provided ``passphrase``, if 
+        necessary, or an instance of a sub-class of ``ssh.PKey``, which will be 
+        used as-is.
 
-        If no private_key is provided either, the keys available through a
-        SSH agent, if any, and any keys found in the user's ssh_dir will be
-        tried in that order. To discover a running SSH agent, the SSH_AUTH_SOCK
-        environment variable must point to a socket file, through which a 
-        connection to the agent can be established. Private key files in the 
-        user's ssh_dir must be in OpenSSH RSA or DSA format and be named 
-        'id_rsa' or 'id_dsa' resp.
+        If no ``private_key`` is provided either, the keys available through a
+        SSH agent, if any, and any keys found in the user's SSH dir will be
+        tried in that order. To discover a running SSH agent, the
+        ``SSH_AUTH_SOCK`` environment variable must point to a socket file,
+        through which a  connection to the agent can be established. Private 
+        key files in the user's SSH dir must be in OpenSSH RSA or DSA format
+        and be named ``'id_rsa'`` or ``'id_dsa'`` resp.
 
-        If a passphrase is required to load a key file, the passphrase set in
-        the config dict will be used directly, if it is a string. If the
-        passphrase is a callable, it will be called with the filename, hostname
-        and username as arguments and is expected to return the passphrase or 
-        None, if the key should be skipped. If no passphrase is given in the 
-        config, the user is prompted for the passphrase through the console, 
-        as a last resort.
+        If a passphrase is required to load a key file, the value of
+        ``passphrase`` set in the config dict will be used directly, if it is
+        a string. If ``passphrase`` is a callable, it will be called with the
+        filename, hostname and username as arguments and is expected to return
+        the passphrase string or ``None``, if the key should be skipped. If no
+        passphrase is given in the config, the user is prompted for the 
+        passphrase through the console, as a last resort.
 
         For remote host verification, a host key will be searched and loaded
-        from the 'known_hosts' file in the user's ssh_dir. If no host key is
+        from the ``known_hosts`` file in the user's SSH dir, i.e. the path set
+        with the config key ``'ssh_dir'`` or ``'~/.ssh'``. If no host key is
         found, no host verification is done.
 
         """
@@ -104,23 +113,23 @@ class ConfigSFTPClient(object):
             raise tpt.get_exception()
 
     def close(self):
-        """Close the ssh.SFTPClient instance and teh SSH transport."""
+        """Close the ``ssh.SFTPClient`` instance and the SSH transport."""
         self._client.close()
         self._transport.close()
 
     def __getattr__(self, name):
-        """Delegate attribute lookup to ssh.SFTPClient instance."""
+        """Delegate attribute lookup to ``ssh.SFTPClient`` instance."""
         return getattr(self._client, name)
 
     def _load_host_key(self, hostname):
         """Load host key for given hostname from known hosts file.
         
         Looks for the known hosts file under the filename 'known_hosts' in the
-        user's ssh dir, i.e. the path set with teh config key 'ssh_dir' or
-        '~/.ssh'.
+        user's SSH dir, i.e. the path set with the config key ``'ssh_dir'`` or
+        ``'~/.ssh'``.
         
-        Returns a ssh.HostKey instance or None, if no key for the host was
-        found.
+        Returns a ``ssh.HostKey`` instance or ``None``, if no key for the host
+        was found.
 
         """
         # get host key, if we know one
@@ -146,7 +155,7 @@ class ConfigSFTPClient(object):
         return hostkey
 
     def _load_private_key(self, filename, keytype=None):
-        """Load private SSH key from file, return ssh.PKey sub-class instance.
+        """Load private SSH key from file, return ``ssh.PKey`` sub-class instance.
 
         If ``keytype`` is not given, tries to determine the key type
         (RSA or DSA) by loading the key file and looking at the BEGIN RSA/DSA
@@ -255,7 +264,7 @@ def _test(args=None):
         dest="debug", action="store_true",
         help="Enable debug logging")
     optparser.add_option('-c', '--config', dest="configpath",
-        default=expanduser('~/.config/test_sftpclient.ini'), metavar="PATH",
+        default=expanduser('~/.config/sftpclient.ini'), metavar="PATH",
         help="Path to configuration file (default: %default)")
 
     if args is None:
@@ -263,7 +272,11 @@ def _test(args=None):
     else:
         options, args = optparser.parse_args(sys.argv[1:])
 
-    config = configobj.ConfigObj(options.configpath)
+    try:
+        config = configobj.ConfigObj(options.configpath, file_error=True)
+    except (OSError, IOError) as exc:
+        sys.stderr.write("Error opening config file: %s\n" % exc)
+        return 1
 
     if options.debug:
         loglevel = logging.DEBUG
@@ -292,11 +305,17 @@ def _test(args=None):
 
         config['passphrase'] = get_passphrase
 
+    if args:
+        remote_dir = args.pop(0)
+    else:
+        remote_dir = config.get('remote_dir', '.')
+
     sftp = ConfigSFTPClient(config)
     print "\n".join(
-        sorted(e for e in sftp.listdir(config.get('remote_dir', '.'))
+        sorted(e for e in sftp.listdir(remote_dir)
         if not e.startswith('.')))
     sftp.close()
+
 
 if __name__ == '__main__':
     sys.exit(_test(sys.argv[1:]) or 0)
