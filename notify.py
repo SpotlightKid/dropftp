@@ -34,7 +34,7 @@ if pynotify:
     Growl = None
 else:
     try:
-        import Growlx
+        import Growl
     except ImportError:
         Growl = None
 
