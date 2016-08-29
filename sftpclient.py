@@ -7,13 +7,13 @@ original paramiko.
 
 If called from the command line, tries to log into remote host and retrieves &
 prints a listing of the remote directory. The remote directory can be given as
-the first non-option argument on the comamnd line or specified in the config
+the first non-option argument on the command line or specified in the config
 file under the key ``'remote_dir'``. If neither is given, the current
 directory, i.e. the user's working directory after log in, is used.
 
 """
 
-__all__ = ['ConfigSFTPClient']
+from __future__ import print_function
 
 import itertools
 import logging
@@ -30,6 +30,8 @@ except:
     # fall back to original paramiko
     import paramiko as ssh
 
+
+__all__ = ['ConfigSFTPClient']
 log = logging.getLogger(__name__)
 
 
@@ -69,7 +71,7 @@ class ConfigSFTPClient(object):
         SSH agent, if any, and any keys found in the user's SSH dir will be
         tried in that order. To discover a running SSH agent, the
         ``SSH_AUTH_SOCK`` environment variable must point to a socket file,
-        through which a  connection to the agent can be established. Private 
+        through which a connection to the agent can be established. Private 
         key files in the user's SSH dir must be in OpenSSH RSA or DSA format
         and be named ``'id_rsa'`` or ``'id_dsa'`` resp.
 
@@ -95,7 +97,7 @@ class ConfigSFTPClient(object):
 
         hostname = config.get('remote_host', 'localhost')
         port = config.get('remote_port', 22)
-        username = config.get('username', getpass.getuser())
+        username = config.get('username') or getpass.getuser()
         password = config.get('password')
         private_key = config.get('private_key')
         hostkey = self._load_host_key(hostname)
@@ -311,9 +313,9 @@ def _test(args=None):
         remote_dir = config.get('remote_dir', '.')
 
     sftp = ConfigSFTPClient(config)
-    print "\n".join(
-        sorted(e for e in sftp.listdir(remote_dir)
-        if not e.startswith('.')))
+    print("\n".join(
+         sorted(e for e in sftp.listdir(remote_dir)
+         if not e.startswith('.'))))
     sftp.close()
 
 
